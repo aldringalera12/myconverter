@@ -6,17 +6,19 @@ from . import db
 import requests
 import os
 import re
-from shutil import rmtree
 
 views = Blueprint("views", __name__)
 
-# Invidious public instances (fallback list)
-INVIDIOUS_INSTANCES = [
-    "https://inv.nadeko.net",
-    "https://invidious.nerdvpn.de",
-    "https://invidious.jing.rocks",
-    "https://yt.artemislena.eu",
-    "https://invidious.privacyredirect.com",
+# Piped API instances (more reliable than Invidious)
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.in.projectsegfau.lt",
+    "https://pipedapi.leptons.xyz",
+    "https://pipedapi.reallyaweso.me",
+    "https://api.piped.yt",
+    "https://pipedapi.moomoo.me",
+    "https://pipedapi.syncpundit.io",
 ]
 
 ## Pages
@@ -34,7 +36,6 @@ def video():
         
         session.clear()
 
-        # Validate URL
         if not url or ("youtube.com" not in url and "youtu.be" not in url):
             flash("Please enter a valid YouTube URL.", category="error")
             return render_template("video.html", user=current_user)
@@ -44,7 +45,7 @@ def video():
         os.makedirs(downloads_path, exist_ok=True)
 
         try:
-            result = download_video_invidious(url, file_type, downloads_path)
+            result = download_with_piped(url, file_type, downloads_path)
             file_path = result['file_path']
             title = result['title']
         except Exception as e:
@@ -52,10 +53,8 @@ def video():
             flash(f"Video could not be downloaded. Error: {e}", category="error")
             return render_template("video.html", user=current_user)
 
-        # Save to history
         save_history(url, date, title, "video", file_type)
         
-        # Store for download page
         session["download_file_path"] = file_path
         session["download_title"] = title
         session["download_file_type"] = file_type
@@ -136,62 +135,85 @@ def extract_video_id(url: str) -> str:
         return url.split('v=')[-1].split('&')[0].split('#')[0]
     elif '/embed/' in url:
         return url.split('/embed/')[-1].split('?')[0]
+    elif '/shorts/' in url:
+        return url.split('/shorts/')[-1].split('?')[0]
     return None
 
-def download_video_invidious(url: str, file_type: str, downloads_path: str) -> dict:
-    """Download video using Invidious API"""
+def download_with_piped(url: str, file_type: str, downloads_path: str) -> dict:
+    """Download video using Piped API"""
     
     video_id = extract_video_id(url)
     if not video_id:
         raise Exception("Could not extract video ID from URL")
     
-    print(f"Downloading video ID: {video_id}")
+    print(f"Video ID: {video_id}")
     
-    # Try each Invidious instance
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+    }
+    
     last_error = None
-    for instance in INVIDIOUS_INSTANCES:
+    
+    for instance in PIPED_INSTANCES:
         try:
-            print(f"Trying instance: {instance}")
+            print(f"Trying: {instance}")
             
-            # Get video info
-            api_url = f"{instance}/api/v1/videos/{video_id}"
-            response = requests.get(api_url, timeout=15, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
+            # Get video streams
+            api_url = f"{instance}/streams/{video_id}"
+            response = requests.get(api_url, headers=headers, timeout=20)
             
             if response.status_code != 200:
+                print(f"Status {response.status_code}")
                 continue
-                
+            
             data = response.json()
+            
+            if 'error' in data:
+                print(f"API error: {data.get('error')}")
+                continue
+            
             title = data.get('title', 'video')
             
             # Get download URL
             download_url = None
             
             if file_type == "mp3":
-                # Get audio stream
-                adaptive_formats = data.get('adaptiveFormats', [])
-                for fmt in adaptive_formats:
-                    if 'audio' in fmt.get('type', ''):
-                        download_url = fmt.get('url')
-                        break
+                # Get best audio stream
+                audio_streams = data.get('audioStreams', [])
+                if audio_streams:
+                    # Sort by bitrate, get highest
+                    audio_streams.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
+                    download_url = audio_streams[0].get('url')
+                    print(f"Audio: {audio_streams[0].get('quality', 'unknown')}")
             else:
-                # Get video stream (prefer 720p or best available)
-                formats = data.get('formatStreams', [])
-                for fmt in formats:
-                    if fmt.get('quality') in ['720p', '1080p', '480p', '360p']:
-                        download_url = fmt.get('url')
+                # Get video stream (prefer 720p)
+                video_streams = data.get('videoStreams', [])
+                
+                # First try to find 720p or 480p with audio
+                for stream in video_streams:
+                    quality = stream.get('quality', '')
+                    if quality in ['720p', '480p', '360p'] and stream.get('videoOnly') == False:
+                        download_url = stream.get('url')
+                        print(f"Video: {quality}")
                         break
                 
-                # Fallback to adaptive formats
+                # If no combined stream, get video only
                 if not download_url:
-                    adaptive_formats = data.get('adaptiveFormats', [])
-                    for fmt in adaptive_formats:
-                        if 'video' in fmt.get('type', '') and 'mp4' in fmt.get('type', ''):
-                            download_url = fmt.get('url')
+                    for stream in video_streams:
+                        quality = stream.get('quality', '')
+                        if quality in ['720p', '480p', '360p']:
+                            download_url = stream.get('url')
+                            print(f"Video (no audio): {quality}")
                             break
+                
+                # Fallback to any available stream
+                if not download_url and video_streams:
+                    download_url = video_streams[0].get('url')
+                    print(f"Fallback video stream")
             
             if not download_url:
+                print("No download URL found")
                 continue
             
             # Download the file
@@ -200,35 +222,58 @@ def download_video_invidious(url: str, file_type: str, downloads_path: str) -> d
             filename = f"{safe_title}.{ext}"
             file_path = os.path.join(downloads_path, filename)
             
-            print(f"Downloading: {title}")
-            file_response = requests.get(download_url, stream=True, timeout=300, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
+            print(f"Downloading: {title[:50]}...")
+            
+            file_response = requests.get(
+                download_url, 
+                stream=True, 
+                timeout=300,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': 'https://piped.video/',
+                }
+            )
             file_response.raise_for_status()
+            
+            total_size = int(file_response.headers.get('content-length', 0))
+            downloaded = 0
             
             with open(file_path, 'wb') as f:
                 for chunk in file_response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            if downloaded % (1024 * 1024) < 8192:  # Log every ~1MB
+                                print(f"Progress: {percent:.1f}%")
             
-            print(f"Downloaded successfully: {filename}")
+            print(f"Download complete: {filename}")
             
             return {
                 'file_path': file_path,
                 'title': title
             }
             
+        except requests.exceptions.Timeout:
+            last_error = "Request timeout"
+            print(f"Timeout on {instance}")
+            continue
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            print(f"Request error: {e}")
+            continue
         except Exception as e:
-            last_error = e
-            print(f"Instance {instance} failed: {e}")
+            last_error = str(e)
+            print(f"Error: {e}")
             continue
     
-    raise Exception(f"All Invidious instances failed. Last error: {last_error}")
+    raise Exception(f"All Piped instances failed. Last error: {last_error}")
 
 def sanitize_filename(title: str) -> str:
     """Remove invalid characters from filename"""
-    title = re.sub(r'[<>:"/\\|?*]', '', title)
-    title = title[:100].strip()
+    title = re.sub(r'[<>:"/\\|?*\n\r\t]', '', title)
+    title = title[:80].strip()
     return title or "video"
 
 def save_history(url: str, date: str, title: str, link_type: str, file_type: str) -> None:
