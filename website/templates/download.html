@@ -1,0 +1,42 @@
+{% extends "base.html" %} {% block title %}Download Ready{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center" style="margin-top: 3rem;">
+    <div class="col-lg-6 col-md-8">
+        <div class="card text-center">
+            <div class="card-body" style="padding: 3rem;">
+                <div class="success-checkmark">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+                    </svg>
+                </div>
+                
+                <h2 class="page-title" style="margin-top: 0;">Conversion Complete!</h2>
+                
+                <div style="margin: 2rem 0; padding: 1.5rem; background: var(--dark-lighter); border-radius: 12px;">
+                    <p style="color: var(--text-muted); margin-bottom: 0.5rem; font-size: 0.9rem;">Ready to download</p>
+                    <h4 style="color: var(--text); margin-bottom: 1rem; word-break: break-word;">{{ title }}</h4>
+                    <span class="badge badge-info" style="font-size: 1rem;">{{ file_type|upper }}</span>
+                </div>
+                
+                <a href="{{ url_for('views.download_file') }}" class="btn btn-success btn-lg" style="padding: 1rem 3rem;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-download" viewBox="0 0 16 16" style="margin-right: 10px;">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                    </svg>
+                    Download {{ file_type|upper }}
+                </a>
+                
+                <div style="margin-top: 2rem;">
+                    <a href="{{ url_for('views.video') }}" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-left" viewBox="0 0 16 16" style="margin-right: 8px;">
+                            <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
+                        </svg>
+                        Convert Another Video
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
