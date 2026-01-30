@@ -36,7 +36,7 @@ def video():
 
         # Try converting a url to a downloadable video
         try:
-            yt = YouTube(url)
+            yt = YouTube(url, client='WEB')
         except Exception:
             if "playlist?" in url:
                 flash("Playlists can only be converted on the playlist page.", category="error")
@@ -145,7 +145,7 @@ def playlist():
 
         for index, url in enumerate(playlist):
             try:
-                yt = YouTube(url)
+                yt = YouTube(url, client='WEB')
                 video = download_video(yt, file_type, playlist_path, False)
                 file_path = os.path.join(playlist_path, video.default_filename)
 
