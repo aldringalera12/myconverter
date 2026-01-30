@@ -10,8 +10,14 @@ from shutil import rmtree
 
 views = Blueprint("views", __name__)
 
-# Cobalt API endpoint
-COBALT_API = "https://api.cobalt.tools/api/json"
+# Invidious public instances (fallback list)
+INVIDIOUS_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.jing.rocks",
+    "https://yt.artemislena.eu",
+    "https://invidious.privacyredirect.com",
+]
 
 ## Pages
 
@@ -38,7 +44,7 @@ def video():
         os.makedirs(downloads_path, exist_ok=True)
 
         try:
-            result = download_with_cobalt(url, file_type, downloads_path)
+            result = download_video_invidious(url, file_type, downloads_path)
             file_path = result['file_path']
             title = result['title']
         except Exception as e:
@@ -122,105 +128,106 @@ def search():
 
 ## Helper Functions
 
-def download_with_cobalt(url: str, file_type: str, downloads_path: str) -> dict:
-    """Download video/audio using Cobalt API"""
-    
-    headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-    }
-    
-    # Cobalt API payload
-    payload = {
-        'url': url,
-        'vQuality': '1080',
-        'filenamePattern': 'basic',
-    }
-    
-    if file_type == "mp3":
-        payload['isAudioOnly'] = True
-        payload['aFormat'] = 'mp3'
-    else:
-        payload['isAudioOnly'] = False
-    
-    # Request from Cobalt API
-    response = requests.post(COBALT_API, json=payload, headers=headers, timeout=30)
-    data = response.json()
-    
-    if data.get('status') == 'error':
-        raise Exception(data.get('text', 'Cobalt API error'))
-    
-    # Get download URL
-    download_url = data.get('url')
-    if not download_url:
-        # Handle picker (multiple options)
-        if data.get('status') == 'picker':
-            picker = data.get('picker', [])
-            if picker:
-                download_url = picker[0].get('url')
-        
-        # Handle stream
-        if data.get('status') == 'stream':
-            download_url = data.get('url')
-        
-        # Handle redirect
-        if data.get('status') == 'redirect':
-            download_url = data.get('url')
-    
-    if not download_url:
-        raise Exception("Could not get download URL from Cobalt")
-    
-    # Get filename from URL or generate one
-    title = extract_video_title(url) or "video"
-    safe_title = sanitize_filename(title)
-    ext = "mp3" if file_type == "mp3" else "mp4"
-    filename = f"{safe_title}.{ext}"
-    file_path = os.path.join(downloads_path, filename)
-    
-    # Download the file
-    print(f"Downloading from Cobalt: {download_url[:50]}...")
-    file_response = requests.get(download_url, stream=True, timeout=300)
-    file_response.raise_for_status()
-    
-    with open(file_path, 'wb') as f:
-        for chunk in file_response.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
-    
-    print(f"Downloaded: {filename}")
-    
-    return {
-        'file_path': file_path,
-        'title': title
-    }
-
-def extract_video_title(url: str) -> str:
-    """Try to get video title from YouTube"""
-    try:
-        # Try to get title from YouTube page
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        match = re.search(r'<title>(.+?) - YouTube</title>', response.text)
-        if match:
-            return match.group(1)
-    except:
-        pass
-    
-    # Extract video ID as fallback
-    video_id = None
+def extract_video_id(url: str) -> str:
+    """Extract YouTube video ID from URL"""
     if 'youtu.be/' in url:
-        video_id = url.split('youtu.be/')[-1].split('?')[0]
+        return url.split('youtu.be/')[-1].split('?')[0].split('&')[0]
     elif 'v=' in url:
-        video_id = url.split('v=')[-1].split('&')[0]
+        return url.split('v=')[-1].split('&')[0].split('#')[0]
+    elif '/embed/' in url:
+        return url.split('/embed/')[-1].split('?')[0]
+    return None
+
+def download_video_invidious(url: str, file_type: str, downloads_path: str) -> dict:
+    """Download video using Invidious API"""
     
-    return video_id or "video"
+    video_id = extract_video_id(url)
+    if not video_id:
+        raise Exception("Could not extract video ID from URL")
+    
+    print(f"Downloading video ID: {video_id}")
+    
+    # Try each Invidious instance
+    last_error = None
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            print(f"Trying instance: {instance}")
+            
+            # Get video info
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            response = requests.get(api_url, timeout=15, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            
+            if response.status_code != 200:
+                continue
+                
+            data = response.json()
+            title = data.get('title', 'video')
+            
+            # Get download URL
+            download_url = None
+            
+            if file_type == "mp3":
+                # Get audio stream
+                adaptive_formats = data.get('adaptiveFormats', [])
+                for fmt in adaptive_formats:
+                    if 'audio' in fmt.get('type', ''):
+                        download_url = fmt.get('url')
+                        break
+            else:
+                # Get video stream (prefer 720p or best available)
+                formats = data.get('formatStreams', [])
+                for fmt in formats:
+                    if fmt.get('quality') in ['720p', '1080p', '480p', '360p']:
+                        download_url = fmt.get('url')
+                        break
+                
+                # Fallback to adaptive formats
+                if not download_url:
+                    adaptive_formats = data.get('adaptiveFormats', [])
+                    for fmt in adaptive_formats:
+                        if 'video' in fmt.get('type', '') and 'mp4' in fmt.get('type', ''):
+                            download_url = fmt.get('url')
+                            break
+            
+            if not download_url:
+                continue
+            
+            # Download the file
+            safe_title = sanitize_filename(title)
+            ext = "mp3" if file_type == "mp3" else "mp4"
+            filename = f"{safe_title}.{ext}"
+            file_path = os.path.join(downloads_path, filename)
+            
+            print(f"Downloading: {title}")
+            file_response = requests.get(download_url, stream=True, timeout=300, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            file_response.raise_for_status()
+            
+            with open(file_path, 'wb') as f:
+                for chunk in file_response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            print(f"Downloaded successfully: {filename}")
+            
+            return {
+                'file_path': file_path,
+                'title': title
+            }
+            
+        except Exception as e:
+            last_error = e
+            print(f"Instance {instance} failed: {e}")
+            continue
+    
+    raise Exception(f"All Invidious instances failed. Last error: {last_error}")
 
 def sanitize_filename(title: str) -> str:
     """Remove invalid characters from filename"""
-    # Remove invalid characters
     title = re.sub(r'[<>:"/\\|?*]', '', title)
-    # Limit length
     title = title[:100].strip()
     return title or "video"
 
